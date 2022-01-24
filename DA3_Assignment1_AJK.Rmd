@@ -5,9 +5,14 @@ date: "1/21/2022"
 output: pdf_document
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, eval = TRUE)
+```
+
+
 ## Introduction
 
-In this project, I analyze the [**cps-earnings dataset**](https://osf.io/g8p9j/) to build predictive models targeting the earnings per hour of advertising, promotions, marketing and sales managers. Altogether 4 models are built, all OLS, but increasing in complexity. The performance of these models are evaluated through RMSE and BIC in the full sample and cross-validated RMSE. Finally, the relationship between model complexity and performance is illustrated with the help of a visual aid. 
+In this project, I analyze the [**cps-earnings dataset**](https://osf.io/g8p9j/) to build predictive models targeting the earnings per hour of advertising, promotions, marketing and sales managers. Altogether 4 models are built, all OLS, but increasing in complexity. The performance of these models are evaluated through RMSE and BIC in the full sample and through cross-validated RMSE. Finally, the relationship between model complexity and performance is illustrated with the help of a visual aid. 
 
 Build four predictive models using linear regression for earnings per hour. 
 1.	Models: the target variable is earnings per hour, all others would be predictors.
@@ -15,7 +20,7 @@ Build four predictive models using linear regression for earnings per hour.
 3.	Compare model performance of these models (a) RMSE in the full sample, (2) cross-validated RMSE and (c) BIC in the full sample. 
 4.	Discuss the relationship between model complexity and performance. You may use visual aids. 
 
-```{r import, echo=FALSE, message=FALSE}
+```{r import}
 #clear memory
 rm(list=ls())
 
@@ -30,4 +35,96 @@ pacman::p_load(tidyverse, modelsummary, kableExtra, fixest, estimatr)
 df_orig <- read_csv( 'https://osf.io/4ay9x/download' )
 
 ```
+
+
+```{r filter}
+
+# keep only two occupation types: Advertising and promotions managers and 
+# Marketing and sales managers
+df_orig <- df_orig %>% mutate(sample=ifelse(occ2012==0040,1,
+                                              ifelse(occ2012 == 0050,2,0)))
+
+df <- df_orig %>%
+  filter(sample==1 | sample==2) 
+```
+
+```{r label engineering}
+
+#create target variable
+df <- df %>% mutate(w = earnwke/uhours)
+
+# filter out extreme values -- hourly wage should be at least 1 USD -- lower does not make sense (1 observation lost)
+
+df <- df %>% filter(w >= 1)
+
+#create 5th and 95th percentiles
+
+P95 <- function(x){quantile(x,0.95,na.rm=T)}
+P05 <- function(x){quantile(x,0.05,na.rm=T)}
+
+#create descriptive table
+datasummary( (`Hourly wage` = w ) ~
+               Mean + Median + SD + Min + Max + P05 + P95, 
+             data = df,
+             title = 'Hourly wage of Advertising and Sales Managers' ) %>% 
+  kableExtra::kable_styling(latex_options = "hold_position")
+
+```
+
+
+```{r feature engineering}
+
+#Data refactoring
+
+#create 6 dummies for highest education
+df <- df %>%
+  mutate(no_high_school = ifelse(grade92 == 34 | grade92 ==  37, 1, 0),
+         high_schol = ifelse(grade92 == 40, 1,0),
+         associate_degree = ifelse(grade92 == 41 | grade92 == 42, 1,0),
+         bachelors = ifelse(grade92 == 43,1,0),
+         masters = ifelse(grade92 == 44, 1, 0),
+         professional = ifelse(grade92 == 45, 1, 0))
+
+#create female dummy
+df <- df %>%
+  mutate(female = as.numeric(sex == 2))
+
+#create union member dummy
+df <- df %>%
+  mutate(union = ifelse(unionmme == "No",0,1))
+
+#create native dummy
+df <- df %>%
+  mutate(native = ifelse(prcitshp == "Native, Born In US" | prcitshp == "Native, Born Abroad Of US Parent(s)",1,0))
+
+#create private sector dummy
+df <- df %>%
+  mutate(private = ifelse(class == "Private, For Profit" | prcitshp == "Private, Nonprofit",1,0))
+
+#create employed_at_work dummy
+df <- df %>%
+  mutate(employed_at_work = ifelse(lfsr94 == "Employed-At Work",1,0))
+
+```
+
+```{r models}
+# Model 1: Linear regression one feature
+
+model1 <- as.formula(w ~ age)
+
+# model 2-4: multiple linear regression
+
+model2 <- as.formula(w ~ age + female + race)
+model3 <- as.formula(w ~ age + female + race + union + marital)
+model4 <- as.formula(w ~ age + female + race + union + marital + ownchild + native + private + employed_at_work +
+                       no_high_school + high_schol + associate_degree + bachelors + masters + professional)
+
+# Running simple OLS
+reg1 <- feols(model1, data=df, vcov = 'hetero')
+reg2 <- feols(model2, data=df, vcov = 'hetero')
+reg3 <- feols(model3, data=df, vcov = 'hetero')
+reg4 <- feols(model4, data=df, vcov = 'hetero')
+reg5 <- feols(model5, data=df, vcov = 'hetero')
+```
+
 
