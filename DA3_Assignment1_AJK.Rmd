@@ -105,6 +105,13 @@ df <- df %>%
 df <- df %>%
   mutate(employed_at_work = ifelse(lfsr94 == "Employed-At Work",1,0))
 
+# age: quadratic, cubic
+df <- df %>%
+  mutate(agesq = age^2,
+         agecu = age^3)
+
+#interactions?
+
 ```
 
 ```{r models}
@@ -127,4 +134,53 @@ reg4 <- feols(model4, data=df, vcov = 'hetero')
 reg5 <- feols(model5, data=df, vcov = 'hetero')
 ```
 
+```{r evaluation all sample}
+
+# evaluation of the models: using all the sample
+fitstat_register("k", function(x){length( x$coefficients ) - 1}, "No. Variables")
+etable( reg1 , reg2 , reg3 , reg4 , reg5 , fitstat = c('aic','bic','rmse','r2','ar2','n','k') )
+
+```
+
+```{r evaluation cv}
+
+# set number of folds to use
+k <- 4
+
+set.seed(13505)
+cv1 <- train(model1, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+set.seed(13505)
+cv2 <- train(model2, df, method = "lm", trControl = trainControl(method = "cv", number = k))
+set.seed(13505)
+cv3 <- train(model3, df, method = "lm", trControl = trainControl(method = "cv", number = k), na.action = "na.omit")
+set.seed(13505)
+cv4 <- train(model4, df, method = "lm", trControl = trainControl(method = "cv", number = k), na.action = "na.omit")
+set.seed(13505)
+cv5 <- train(model5, df, method = "lm", trControl = trainControl(method = "cv", number = k), na.action = "na.omit")
+
+# Calculate RMSE for each fold and the average RMSE as well
+cv <- c("cv1", "cv2", "cv3", "cv4", "cv5")
+rmse_cv <- c()
+
+for(i in 1:length(cv)){
+  rmse_cv[i] <- sqrt((get(cv[i])$resample[[1]][1]^2 +
+                       get(cv[i])$resample[[1]][2]^2 +
+                       get(cv[i])$resample[[1]][3]^2 +
+                       get(cv[i])$resample[[1]][4]^2)/4)
+}
+
+
+# summarize results
+cv_mat <- data.frame(rbind(cv1$resample[4], "Average"),
+           rbind(cv1$resample[1], rmse_cv[1]),
+           rbind(cv2$resample[1], rmse_cv[2]),
+           rbind(cv3$resample[1], rmse_cv[3]),
+           rbind(cv4$resample[1], rmse_cv[4])
+           )
+
+colnames(cv_mat)<-c("Resample","Model1", "Model2", "Model3", "Model4")
+cv_mat 
+
+
+```
 
