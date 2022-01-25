@@ -1,8 +1,16 @@
 ---
 title: "DA3 - Assignment 1"
 author: "Adam Kovacs"
-date: "1/21/2022"
-output: pdf_document
+date: "`r format(Sys.time(), '%d %B %Y')`"
+geometry: margin=1.5cm
+fontsize: 8pt
+output: 
+  pdf_document:
+    fig_caption: true
+    latex_engine: xelatex
+header-includes: |
+  \usepackage{titling}
+  \setlength{\droptitle}{-8em}
 ---
 
 ```{r setup, include=FALSE}
@@ -10,7 +18,7 @@ knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, eval = TRU
 ```
 
 
-## Introduction
+### Introduction
 
 In this project, I analyze the [**cps-earnings dataset**](https://osf.io/g8p9j/) to build predictive models targeting the earnings per hour of advertising, promotions, marketing and sales managers. Altogether 4 models are built, all OLS, but increasing in complexity. The performance of these models are evaluated through RMSE and BIC in the full sample and through cross-validated RMSE. Finally, the relationship between model complexity and performance is illustrated with the help of a visual aid. 
 
@@ -42,14 +50,14 @@ df <- df_orig %>%
   filter(sample==1 | sample==2) 
 ```
 
+### Preparatory steps
+
+Having filtered the dataset to the chosen occupations, the first task was label engineering. The required target variable is earnings per hour, but we have data on weekly earnings and usual working hours. Thus, we calculated from these two the target through a simple division. Next, we look at the descriptive statistics of earnings per hour and detect an extremely low minimum value. Since earning such a low wage is not even allowed by law, we decide to filter on at least 1 USD hourly wage (losing one observation).
+
 ```{r label engineering}
 
 #create target variable
 df <- df %>% mutate(w = earnwke/uhours)
-
-# filter out extreme values -- hourly wage should be at least 1 USD -- lower does not make sense (1 observation lost)
-
-df <- df %>% filter(w >= 1)
 
 #create 5th and 95th percentiles
 
@@ -63,8 +71,14 @@ datasummary( (`Hourly wage` = w ) ~
              title = 'Hourly wage of Advertising and Sales Managers' ) %>% 
   kableExtra::kable_styling(latex_options = "hold_position")
 
+# filter out extreme values -- hourly wage should be at least 1 USD -- lower does not make sense (1 observation lost)
+
+df <- df %>% filter(w >= 1)
+
 ```
 
+Next, we move on to feature engineering. From the categorical variable on highest education, we create 6 dummies, namely did not finish high school, finished high school, has an associate degree, has a bachelors degree, has a masters degree and has a professional degree. We also created a dummy for gender (female as 1), for union membership, whether the person is native, whether the workplace is in the private sector and the employment status. 
+As for functional forms, there are not many numerical variables, but obviously a really important one is age. Between age and earnings, a lot of earlier literature suggests a non-linear, quadratic relationship, so we create that feature as well. 
 
 ```{r feature engineering}
 
@@ -72,8 +86,8 @@ datasummary( (`Hourly wage` = w ) ~
 
 #create 6 dummies for highest education
 df <- df %>%
-  mutate(no_high_school = ifelse(grade92 == 34 | grade92 ==  37, 1, 0),
-         high_schol = ifelse(grade92 == 40, 1,0),
+  mutate(no_high_school = ifelse(grade92 %in% seq(31,38,1), 1, 0),
+         high_schol = ifelse(grade92 == 39 | grade92 == 40, 1,0),
          associate_degree = ifelse(grade92 == 41 | grade92 == 42, 1,0),
          bachelors = ifelse(grade92 == 43,1,0),
          masters = ifelse(grade92 == 44, 1, 0),
@@ -103,28 +117,35 @@ df <- df %>%
 df <- df %>%
   mutate(agesq = age^2)
 
-#interactions?
-
 ```
 
+### Modelling and evaluation
+
+Finally we arrive at modelling. In the first, simplest model, only one variable age (and its square) is used as predictors, which is a good proxy for experience. In the second model, we include the traditional university degrees (bachelors and masters) that also definitely conribute to higher wages. In the third model, important characteristics of people (gender, race, union membership) and firms are also added (whether it is in private sector). Finally, in the most complex model, all highest education dummies and further personal traits are included (marital status, children, native). 
+
 ```{r models}
-# Model 1-4: Linear regression models with increasing complexity
+# create linear regression models with increasing complexity
 
 model1 <- as.formula(w ~ age + agesq)
 model2 <- as.formula(w ~ age + agesq + bachelors + masters)
-model3 <- as.formula(w ~ age + agesq + bachelors + masters + female + race + marital + ownchild)
+model3 <- as.formula(w ~ age + agesq + bachelors + masters + female + race + union + private)
 model4 <- as.formula(w ~ age + agesq + bachelors + masters + female + race + union + marital + ownchild + native + private + employed_at_work + no_high_school + high_schol + associate_degree + professional)
 
-# Running simple OLS
+#interactions?
+
+# running models
 reg1 <- feols(model1, data=df, vcov = 'hetero')
 reg2 <- feols(model2, data=df, vcov = 'hetero')
 reg3 <- feols(model3, data=df, vcov = 'hetero')
 reg4 <- feols(model4, data=df, vcov = 'hetero')
+
 ```
+
+First, we evaluate the models using the full sample. Based on both the Akaike and Bayesian information criterion, the best model is the third one, which has the lowest number. Looking at the RMSE, however, it has its minimum at the fourth, most complex model across the four models estimated.
 
 ```{r evaluation all sample}
 
-# evaluation of the models: using all the sample
+# evaluation - full sample
 fitstat_register("k", function(x){length( x$coefficients ) - 1}, "No. Variables")
 etable( reg1 , reg2 , reg3 , reg4 , fitstat = c('aic','bic','rmse','r2','ar2','n','k') )
 
@@ -135,6 +156,7 @@ etable( reg1 , reg2 , reg3 , reg4 , fitstat = c('aic','bic','rmse','r2','ar2','n
 # set number of folds to use
 k <- 4
 
+# create four folds
 set.seed(13505)
 cv1 <- train(model1, df, method = "lm", trControl = trainControl(method = "cv", number = k))
 set.seed(13505)
@@ -144,7 +166,7 @@ cv3 <- train(model3, df, method = "lm", trControl = trainControl(method = "cv", 
 set.seed(13505)
 cv4 <- train(model4, df, method = "lm", trControl = trainControl(method = "cv", number = k), na.action = "na.omit")
 
-# Calculate RMSE for each fold and the average RMSE as well
+# Calculate RMSE for each fold and average RMSE as well
 cv <- c("cv1", "cv2", "cv3", "cv4")
 rmse_cv <- c()
 
@@ -169,6 +191,10 @@ cv_mat
 
 
 ```
+
+We also consider a more robust evaluation method through a 4-fold cross-validation. Based on the average RMSE of the four folds, it leans towards the suggestion of the information criterions: the third model has the lowest value, beating the fourth one by quite some margin. 
+
+The relationship between model complexity and the performance of the models is also illustrated through a visual aid. We can see that going from the first to the second model improved the predictive power substantially, university degree seems to be indeed very important. Adding the further features describing the characteristics of the person and the firm improved the RMSE further in the third model. However, adding all remaining predictors resulted in a worse performance after all, most likely due to some bad, unnecessary predictors.
 
 
 ```{r model complexity}
