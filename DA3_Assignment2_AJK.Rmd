@@ -93,7 +93,7 @@ data <- data %>%
 #create numeric columns
 data <- data %>%
   mutate(
-    usd_price_day = price,
+    usd_price_day = as.numeric(price),
     p_host_response_rate = as.numeric(host_response_rate),
     p_host_acceptance_rate = as.numeric(host_acceptance_rate),
     c_host_listings_count = as.numeric(host_listings_count)
@@ -139,8 +139,6 @@ data <- data %>%
                                 as.Date(first_review ,format="%Y-%m-%d")))
 
 
-# create dummy vars
-dummies <- c("host_identity_verified", "host_is_superhost", "host_has_profile_pic", "has_availability", "instant_bookable")
 
 #amenities is a list of stuff - use grepl to create dummies
 
@@ -189,6 +187,11 @@ data$luggage <- ifelse(grepl("Luggage dropoff allowed",data$amenities),1,0)
 data$toys <- ifelse(grepl("Children\\u2019s books and toys",data$amenities),1,0)
 
 
+# create dummy vars
+dummies <- c("host_identity_verified", "host_is_superhost", "host_has_profile_pic", "has_availability", "instant_bookable")
+
+#these are booleans
+
 #dummies <- names(data)[seq(73,122)]
 
 
@@ -201,6 +204,38 @@ dnames <- data %>%
 dnames_i <- match(dnames, colnames(data))
 colnames(data)[dnames_i] <- paste0("d_", tolower(gsub("[^[:alnum:]_]", "",dummies)))
 
+# keep columns if contain d_, n_,f_, p_, usd_ and some others
+data <- data %>%
+  select(matches("^d_.*|^n_.*|^f_.*|^p_.*|^usd_.*"), price, id,
+         neighbourhood_cleansed,cancellation_policy,room_type,property_type)
+
 ```
 
+
+```{r target engineering}
+
+datasummary( usd_price_day ~ Mean + Median + Min + Max + P25 + P75, data = data )
+
+#maybe take log
+data <- data %>%
+  mutate(ln_usd_price_day = log(usd_price_day))
+
+#maybe filter
+data <- data %>%
+  filter(price <1000)
+
+```
+
+```{r functional forms}
+# Squares and further values to create
+data <- data %>%
+  mutate(n_accommodates2=n_accommodates^2, 
+         ln_accommodates=log(n_accommodates) ,
+         ln_accommodates2=log(n_accommodates)^2,
+         ln_beds = log(n_beds),
+         ln_number_of_reviews = log(n_number_of_reviews+1)
+        )
+
+
+```
 
