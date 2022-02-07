@@ -56,7 +56,7 @@ data <- data %>%
 #rename variables, create property type as factor
 data <- data %>%
   mutate(
-    property_type = ifelse(data$property_type == "Entire rental unit" | data$property_type == "Entire serviced apartment" | data$property_type == "Entire home/apt", "Entire apartment", "Room in apartment"),
+    property_type = ifelse(data$property_type %in% c("Entire rental unit", "Entire serviced apartment", "Entire home/apt"), "Entire apartment", "Room in apartment"),
     f_property_type = factor(property_type))
 
 #datasummary(room_type ~ N + Percent() , data = data )
@@ -72,13 +72,9 @@ data <- data %>%
 ```{r feature engineering}
 
 #create room type as factor
-data <- data %>%
-  mutate(f_room_type = factor(room_type))
-
-# Rename room type because it is too long
-data$f_room_type2 <- factor(ifelse(data$f_room_type== "Entire home/apt", "Entire/Apt",
-                                   ifelse(data$f_room_type== "Private room", "Private",
-                                          ifelse(data$f_room_type== "Shared room", "Shared", "."))))
+data$f_room_type <- factor(ifelse(data$room_type== "Entire home/apt", "Entire/Apt",
+                                   ifelse(data$room_type== "Private room", "Private",
+                                          ifelse(data$room_type== "Shared room", "Shared", "."))))
 
 #create host response time as categorical - first deal with two ways enoded NA
 data <- data %>% naniar::replace_with_na(replace = list(host_response_time = 'N/A'))
@@ -186,14 +182,11 @@ data$smoke <- ifelse(grepl("Smoke alarm",data$amenities),1,0)
 data$luggage <- ifelse(grepl("Luggage dropoff allowed",data$amenities),1,0)
 data$toys <- ifelse(grepl("Children\\u2019s books and toys",data$amenities),1,0)
 
+#convert booleans to dummies
+data <- data %>% mutate_if(is.logical,as.numeric)
 
-# create dummy vars
-dummies <- c("host_identity_verified", "host_is_superhost", "host_has_profile_pic", "has_availability", "instant_bookable")
-
-#these are booleans
-
-#dummies <- names(data)[seq(73,122)]
-
+#dummies are the created variables and the booleans that were converted
+dummies <- c(c("host_identity_verified", "host_is_superhost", "host_has_profile_pic", "has_availability", "instant_bookable"), names(data)[seq(105,146)])
 
 data <- data %>%
   mutate_at(vars(dummies), funs("d"= (.)))
@@ -206,25 +199,28 @@ colnames(data)[dnames_i] <- paste0("d_", tolower(gsub("[^[:alnum:]_]", "",dummie
 
 # keep columns if contain d_, n_,f_, p_, usd_ and some others
 data <- data %>%
-  select(matches("^d_.*|^n_.*|^f_.*|^p_.*|^usd_.*"), price, id,
-         neighbourhood_cleansed,cancellation_policy,room_type,property_type)
+  select(matches("^d_.*|^n_.*|^f_.*|^p_.*|^usd_.*"), id)
 
 ```
 
 
 ```{r target engineering}
 
-datasummary( usd_price_day ~ Mean + Median + Min + Max + P25 + P75, data = data )
+P95 <- function(x){quantile(x,0.95,na.rm=T)}
+P05 <- function(x){quantile(x,0.05,na.rm=T)}
+
+#datasummary( usd_price_day ~ Mean + Median + Min + Max + P05 + P25 + P75 + P95, data = data )
 
 #maybe take log
 data <- data %>%
   mutate(ln_usd_price_day = log(usd_price_day))
 
-#maybe filter
+#filter on at least 5 USD, even for a room below that is unreasonably low
 data <- data %>%
-  filter(price <1000)
+  filter(usd_price_day <1000 & usd_price_day >5)
 
 ```
+
 
 ```{r functional forms}
 # Squares and further values to create
@@ -236,6 +232,55 @@ data <- data %>%
          ln_number_of_reviews = log(n_number_of_reviews+1)
         )
 
+# Pool accomodations with 0,1,2,10 bathrooms
+data <- data %>%
+  mutate(f_bathroom = cut(n_bathrooms, c(0,1,2,10), labels=c(0,1,2), right = F) )
+
+# Pool num of reviews to 3 categories: none, 1-51 and >51
+data <- data %>%
+  mutate(f_number_of_reviews = cut(n_number_of_reviews, c(0,1,51,max(data$n_number_of_reviews)), labels=c(0,1,2), right = F))
+
+
+# Pool and categorize the number of minimum nights: 1,2,3, 3+
+data <- data %>%
+  mutate(f_minimum_nights= cut(n_minimum_nights, c(1,2,3,max(data$n_minimum_nights)), labels=c(1,2,3), right = F))
+
+#create same for maximum values?
+
+# Change Infinite values with NaNs
+for (j in 1:ncol(data) ) data.table::set(data, which(is.infinite(data[[j]])), j, NA)
 
 ```
+
+```{r dealing with NAs}
+to_filter <- sapply(data, function(x) sum(is.na(x)))
+to_filter[to_filter > 0]
+
+#drop if na in target
+data <- data %>%
+  drop_na(usd_price_day)
+
+#imput when few misssing values
+data <- data %>%
+  mutate(
+    n_bathrooms =  ifelse(is.na(n_bathrooms), median(n_bathrooms, na.rm = T), n_bathrooms), #assume at least 1 bath
+    n_beds = ifelse(is.na(n_beds), n_accommodates, n_beds), #assume n_beds=n_accomodates
+    f_bathroom=ifelse(is.na(f_bathroom),1, f_bathroom),
+    f_minimum_nights=ifelse(is.na(f_minimum_nights),1, f_minimum_nights),
+    f_number_of_reviews=ifelse(is.na(f_number_of_reviews),1, f_number_of_reviews),
+    ln_beds=ifelse(is.na(ln_beds),0, ln_beds),
+  ) 
+
+# drop columns when many missing not important
+to_drop <- c("usd_cleaning_fee", "p_host_response_rate")
+data <- data %>%
+  select(-one_of(to_drop))
+
+to_filter <- sapply(data, function(x) sum(is.na(x)))
+to_filter[to_filter > 0]
+
+
+
+```
+
 
