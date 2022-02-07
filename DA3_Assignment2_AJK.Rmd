@@ -1,0 +1,72 @@
+---
+title: "DA3_Assignment2_AJK"
+author: "Adam Kovacs"
+date: "1/28/2022"
+output: 
+  pdf_document:
+      fig_caption: true
+      latex_engine: xelatex
+header-includes: |
+  \usepackage{titling}
+  \setlength{\droptitle}{-8em}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, eval = TRUE)
+```
+
+### Introduction
+
+In this project, I analyze the [****](link) to build predictive models 
+
+
+
+```{r import}
+#clear memory
+rm(list=ls())
+
+#import packages
+if (!require(pacman)){
+  install.packages("pacman")
+}
+
+pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest)
+
+# import data
+data <- read_csv("./data/listings.csv") %>% 
+  mutate_if(is.character, factor)
+
+```
+
+
+```{r filtering data}
+
+#filter on 2-6 guests
+data <- data %>%
+  filter(accommodates %in% seq(2,6,1))
+
+#datasummary(property_type ~ N + Percent(), data = data )
+data <- data %>%
+  filter(property_type %in% c("Entire rental unit", "Entire serviced apartment",
+                              "Entire home/apt", "Private room in rental unit", 
+                              "Private room in serviced apartment","Room in rental unit","Room in serviced apartment", "Shared room in rental unit"))
+
+#these are the categories fitting apartments 
+
+#rename variables, create property type as factor
+data <- data %>%
+  mutate(
+    property_type = ifelse(data$property_type == "Entire rental unit" | data$property_type == "Entire serviced apartment" | data$property_type == "Entire home/apt", "Entire apartment", "Room in apartment"),
+    f_property_type = factor(property_type))
+
+#datasummary(room_type ~ N + Percent() , data = data )
+
+#there are some hotel rooms - need to be dropped
+
+data <- data %>%
+  filter (!room_type %in% c("Hotel room"))
+
+```
+
+
+
