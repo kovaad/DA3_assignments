@@ -69,4 +69,78 @@ data <- data %>%
 ```
 
 
+```{r feature engineering}
+
+#create room type as factor
+data <- data %>%
+  mutate(f_room_type = factor(room_type))
+
+# Rename room type because it is too long
+data$f_room_type2 <- factor(ifelse(data$f_room_type== "Entire home/apt", "Entire/Apt",
+                                   ifelse(data$f_room_type== "Private room", "Private",
+                                          ifelse(data$f_room_type== "Shared room", "Shared", "."))))
+
+#host_response_time as categorical -- careful with strange NA
+
+#neighborhood_cleansed as factor 367 levels
+
+#host_verifications is a list, maybe count it or even create factor somehow?
+
+#create numeric columns
+data <- data %>%
+  mutate(
+    usd_price_day = price,
+    p_host_response_rate = as.numeric(host_response_rate),
+    p_host_acceptance_rate = as.numeric(host_acceptance_rate),
+    c_host_listings_count = as.numeric(host_listings_count)
+  )
+
+# add new numeric columns from certain columns
+#numericals <- c("accommodates","bathrooms","review_scores_rating",
+#                "number_of_reviews","guests_included",
+#                "reviews_per_month","extra_people","minimum_nights","beds")
+
+numericals <- c("accommodates", "bedrooms", "beds", "minimum_nights", "maximum_nights", "availability_30", "availability_60","availability_90","availability_365", "number_of_reviews","number_of_reviews_ltm", "number_of_reviews_l30d", "review_scores_rating", 
+                "calculated_host_listings_count", "calculated_host_listings_count_entire_homes", 
+                "calculated_host_listings_count_private_rooms", "calculated_host_listings_count_shared_rooms", "reviews_per_month")
+
+#bathrooms numeric, but only has NA values...
+
+#bathroom text - need to be substracted the numbers
+
+
+data <- data %>%
+  mutate_at(vars(all_of(numericals)), lst("n"=as.numeric))
+
+nnames <- data %>%
+  select(ends_with("_n")) %>%
+  names()
+nnames_i <- match(nnames, colnames(data))
+colnames(data)[nnames_i] <- paste0("n_", numericals)
+
+
+#create days since first review
+data <- data %>%
+  mutate(
+    n_days_since = as.numeric(as.Date(calendar_last_scraped,format="%Y-%m-%d") -
+                                as.Date(first_review ,format="%Y-%m-%d")))
+
+
+# create dummy vars
+dummies <- names(data)[seq(73,122)]
+data <- data %>%
+  mutate_at(vars(dummies), funs("d"= (.)))
+# rename columns
+dnames <- data %>%
+  select(ends_with("_d")) %>%
+  names()
+dnames_i <- match(dnames, colnames(data))
+colnames(data)[dnames_i] <- paste0("d_", tolower(gsub("[^[:alnum:]_]", "",dummies)))
+
+#host_is_superhost, host_has_profile_pic, has_availability, instant_bookable dummy
+
+#amenities is a list of stuff
+
+```
+
 
