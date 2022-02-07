@@ -30,7 +30,7 @@ if (!require(pacman)){
   install.packages("pacman")
 }
 
-pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest)
+pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest, naniar, stringr)
 
 # import data
 data <- read_csv("./data/listings.csv") %>% 
@@ -80,11 +80,15 @@ data$f_room_type2 <- factor(ifelse(data$f_room_type== "Entire home/apt", "Entire
                                    ifelse(data$f_room_type== "Private room", "Private",
                                           ifelse(data$f_room_type== "Shared room", "Shared", "."))))
 
-#host_response_time as categorical -- careful with strange NA
+#create host response time as categorical - first deal with two ways enoded NA
+data <- data %>% naniar::replace_with_na(replace = list(host_response_time = 'N/A'))
 
-#neighborhood_cleansed as factor 367 levels
+data <- data %>%
+  mutate(f_host_response_time = factor(host_response_time))
 
-#host_verifications is a list, maybe count it or even create factor somehow?
+#create neighborhood_cleansed as factor - 367 levels
+data <- data %>%
+  mutate(f_neighbourhood_cleansed = factor(neighbourhood_cleansed))
 
 #create numeric columns
 data <- data %>%
@@ -95,18 +99,27 @@ data <- data %>%
     c_host_listings_count = as.numeric(host_listings_count)
   )
 
-# add new numeric columns from certain columns
-#numericals <- c("accommodates","bathrooms","review_scores_rating",
-#                "number_of_reviews","guests_included",
-#                "reviews_per_month","extra_people","minimum_nights","beds")
+#deal with bathrooms text - create numeric and factor variable from it
+numextract <- function(string){ 
+  str_extract(string, "\\-*\\d+\\.*\\d*")
+} 
+
+bathrooms_nr = numextract(data$bathrooms_text)
+
+data <- data %>%
+     mutate(bathrooms = as.numeric(numextract(bathrooms_text)), 
+            bathroom_type = str_trim(str_split_fixed(data$bathrooms_text, bathrooms_nr, n=2)[,2]))
+
+data <- data %>%
+     mutate(bathroom_type = ifelse(data$bathroom_type %in% c("bath", "baths"),"bath", ifelse(data$bathroom_type %in% c("shared bath", "shared baths"), "shared", ifelse(data$bathroom_type  == "private bath", "private", NA))))
+
+data <- data %>%
+  mutate(f_bathroom_type = factor(bathroom_type))
+
 
 numericals <- c("accommodates", "bedrooms", "beds", "minimum_nights", "maximum_nights", "availability_30", "availability_60","availability_90","availability_365", "number_of_reviews","number_of_reviews_ltm", "number_of_reviews_l30d", "review_scores_rating", 
                 "calculated_host_listings_count", "calculated_host_listings_count_entire_homes", 
-                "calculated_host_listings_count_private_rooms", "calculated_host_listings_count_shared_rooms", "reviews_per_month")
-
-#bathrooms numeric, but only has NA values...
-
-#bathroom text - need to be substracted the numbers
+                "calculated_host_listings_count_private_rooms", "calculated_host_listings_count_shared_rooms", "reviews_per_month", "bathrooms")
 
 
 data <- data %>%
@@ -127,7 +140,58 @@ data <- data %>%
 
 
 # create dummy vars
-dummies <- names(data)[seq(73,122)]
+dummies <- c("host_identity_verified", "host_is_superhost", "host_has_profile_pic", "has_availability", "instant_bookable")
+
+#amenities is a list of stuff - use grepl to create dummies
+
+data$essentials <- ifelse(grepl("Essentials",data$amenities),1,0)
+data$tv <- ifelse(grepl("TV",data$amenities),1,0)
+data$kitchen <- ifelse(grepl("Kitchen",data$amenities),1,0)
+data$aircond <- ifelse(grepl("Air conditioning",data$amenities),1,0)
+data$hairdry <- ifelse(grepl("Hair dryer",data$amenities),1,0)
+data$heating <- ifelse(grepl("Heating",data$amenities),1,0)
+data$hotwater <- ifelse(grepl("Hot water",data$amenities),1,0)
+data$wifi <- ifelse(grepl("Wifi",data$amenities),1,0)
+data$iron <- ifelse(grepl("Iron",data$amenities),1,0)
+data$washer <- ifelse(grepl("Washer",data$amenities),1,0)
+data$hangers <- ifelse(grepl("Hangers",data$amenities),1,0)
+data$longterm <- ifelse(grepl("Long term stays allowed",data$amenities),1,0)
+data$balcony <- ifelse(grepl("Patio or balcony",data$amenities),1,0)
+data$parking <- ifelse(grepl("Free parking",data$amenities),1,0)
+data$parking <- ifelse(grepl("Paid parking",data$amenities),1,0)
+data$beachfront <- ifelse(grepl("Beachfront",data$amenities),1,0)
+data$freezer <- ifelse(grepl("Freezer|Refrigerator",data$amenities),1,0)
+data$kettle <- ifelse(grepl("Hot water kettle",data$amenities),1,0)
+data$linens <- ifelse(grepl("Bed linens",data$amenities),1,0)
+data$stove <- ifelse(grepl("Stove",data$amenities),1,0)
+data$oven <- ifelse(grepl("Oven",data$amenities),1,0)
+data$pool <- ifelse(grepl("Pool",data$amenities),1,0)
+data$pillows <- ifelse(grepl("Extra pillows and blankets",data$amenities),1,0)
+data$fireplace <- ifelse(grepl("Indoor fireplace",data$amenities),1,0)
+data$microwave <- ifelse(grepl("Microwave",data$amenities),1,0)
+data$workspace <- ifelse(grepl("Dedicated workspace",data$amenities),1,0)
+data$cooking <- ifelse(grepl("Cooking basics",data$amenities),1,0)
+data$dishes <- ifelse(grepl("Dishes and silverware",data$amenities),1,0)
+data$coffee <- ifelse(grepl("Coffee maker",data$amenities),1,0)
+data$hostgreets <- ifelse(grepl("Host greets you",data$amenities),1,0)
+data$firstaid <- ifelse(grepl("First aid kit",data$amenities),1,0)
+data$crib <- ifelse(grepl("Crib",data$amenities),1,0)
+data$tub <- ifelse(grepl("Bathtub",data$amenities),1,0)
+data$shades <- ifelse(grepl("Room-darkening shades",data$amenities),1,0)
+data$backyard <- ifelse(grepl("Backyard",data$amenities),1,0)
+data$elevator <- ifelse(grepl("Elevator",data$amenities),1,0)
+data$bidet <- ifelse(grepl("Bidet",data$amenities),1,0)
+data$wineglass <- ifelse(grepl("Wine glasses",data$amenities),1,0)
+data$highchair <- ifelse(grepl("High chair",data$amenities),1,0)
+data$bbq <- ifelse(grepl("BBQ grill",data$amenities),1,0)
+data$smoke <- ifelse(grepl("Smoke alarm",data$amenities),1,0)
+data$luggage <- ifelse(grepl("Luggage dropoff allowed",data$amenities),1,0)
+data$toys <- ifelse(grepl("Children\\u2019s books and toys",data$amenities),1,0)
+
+
+#dummies <- names(data)[seq(73,122)]
+
+
 data <- data %>%
   mutate_at(vars(dummies), funs("d"= (.)))
 # rename columns
@@ -136,10 +200,6 @@ dnames <- data %>%
   names()
 dnames_i <- match(dnames, colnames(data))
 colnames(data)[dnames_i] <- paste0("d_", tolower(gsub("[^[:alnum:]_]", "",dummies)))
-
-#host_is_superhost, host_has_profile_pic, has_availability, instant_bookable dummy
-
-#amenities is a list of stuff
 
 ```
 
