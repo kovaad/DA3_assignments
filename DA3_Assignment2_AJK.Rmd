@@ -245,7 +245,17 @@ data <- data %>%
 data <- data %>%
   mutate(f_minimum_nights= cut(n_minimum_nights, c(1,2,3,max(data$n_minimum_nights)), labels=c(1,2,3), right = F))
 
-#create same for maximum values?
+#create same for maximum nights, 
+data <- data %>%
+  mutate(f_maximum_nights= cut(n_maximum_nights, c(7,15,31,365, max(data$n_maximum_nights)), labels=c(1,2,3,4), right = F))
+
+#check host acceptance rate
+#datasummary( p_host_acceptance_rate ~ Mean + Median + Min + Max + P05 + P25 + P75 + P95, data = data )
+
+#replace 101% acceptance rate with 100%
+data <- data %>%
+  mutate(p_host_acceptance_rate = ifelse(p_host_acceptance_rate == 101, 100, p_host_acceptance_rate))
+
 
 # Change Infinite values with NaNs
 for (j in 1:ncol(data) ) data.table::set(data, which(is.infinite(data[[j]])), j, NA)
@@ -253,10 +263,11 @@ for (j in 1:ncol(data) ) data.table::set(data, which(is.infinite(data[[j]])), j,
 ```
 
 ```{r dealing with NAs}
-to_filter <- sapply(data, function(x) sum(is.na(x)))
-to_filter[to_filter > 0]
+#check for number of missing values
+#to_filter <- sapply(data, function(x) sum(is.na(x)))
+#to_filter[to_filter > 0]
 
-#drop if na in target
+#drop if there would be na in target
 data <- data %>%
   drop_na(usd_price_day)
 
@@ -269,18 +280,75 @@ data <- data %>%
     f_minimum_nights=ifelse(is.na(f_minimum_nights),1, f_minimum_nights),
     f_number_of_reviews=ifelse(is.na(f_number_of_reviews),1, f_number_of_reviews),
     ln_beds=ifelse(is.na(ln_beds),0, ln_beds),
+    n_bedrooms = ifelse(is.na(n_bedrooms), n_beds, n_bedrooms), #assume n_bedrooms = n_beds
+    d_host_has_profile_pic = ifelse(is.na(d_host_has_profile_pic), 0, d_host_has_profile_pic), #if no info on profile pic - good chance not there
+    d_host_identity_verified = ifelse(is.na(d_host_identity_verified), 0, d_host_identity_verified),
+    d_host_is_superhost = ifelse(is.na(d_host_is_superhost), 0, d_host_is_superhost)
   ) 
 
-# drop columns when many missing not important
-to_drop <- c("usd_cleaning_fee", "p_host_response_rate")
+# drop the one column that has more than third its values NA - host response time
+to_drop <- c("f_host_response_time")
 data <- data %>%
   select(-one_of(to_drop))
 
-to_filter <- sapply(data, function(x) sum(is.na(x)))
-to_filter[to_filter > 0]
+#to_filter <- sapply(data, function(x) sum(is.na(x)))
+#to_filter[to_filter > 0]
+
+# replace missing variables re reviews with zero, when no review + add flags
+data <- data %>%
+  mutate(
+    flag_days_since=ifelse(is.na(n_days_since),1, 0),
+    n_days_since =  ifelse(is.na(n_days_since), median(n_days_since, na.rm = T), n_days_since),
+    flag_review_scores_rating = ifelse(is.na(n_review_scores_rating),1, 0),
+    n_review_scores_rating =  ifelse(is.na(n_review_scores_rating), median(n_review_scores_rating, na.rm = T), n_review_scores_rating),
+    flag_reviews_per_month=ifelse(is.na(n_reviews_per_month),1, 0),
+    n_reviews_per_month =  ifelse(is.na(n_reviews_per_month), median(n_reviews_per_month, na.rm = T), n_reviews_per_month),
+    flag_n_number_of_reviews=ifelse(n_number_of_reviews==0,1, 0)
+  )
+#table(data$flag_days_since)
+
+#drop if there are only a very little number of values missing (13 from more than 17000)
+data <- data %>%
+  drop_na(p_host_response_rate)
+
+#correct missing categorical variables in f_maximum_nights
+#View(data[is.na(data$f_maximum_nights),c("n_maximum_nights", "f_maximum_nights")])
+data <- data %>%
+  mutate(
+    f_maximum_nights = ifelse(is.na(f_maximum_nights) & (n_maximum_nights < 7),1, ifelse(is.na(f_maximum_nights) & (n_maximum_nights == 222020), 4, f_maximum_nights)))
 
 
+#if bathroom type na, put in simple category of bath
+data$f_bathroom_type[is.na(data$f_bathroom_type)] <- "bath"
+
+# Create variables, measuring the time since: squared, cubic, logs
+data <- data %>%
+  mutate(
+    ln_days_since = log(n_days_since+1),
+    ln_days_since2 = log(n_days_since+1)^2,
+    ln_days_since3 = log(n_days_since+1)^3 ,
+    n_days_since2=n_days_since^2,
+    n_days_since3=n_days_since^3,
+    ln_review_scores_rating = log(n_review_scores_rating),
+    ln_days_since=ifelse(is.na(ln_days_since),0, ln_days_since),
+    ln_days_since2=ifelse(is.na(ln_days_since2),0, ln_days_since2),
+    ln_days_since3=ifelse(is.na(ln_days_since3),0, ln_days_since3),
+  )
 
 ```
 
+```{r final check and save clean data}
+# Look at data
+datasummary( id ~ N , data = data )
+datasummary_skim( data , 'categorical' )
+
+
+# where do we have missing variables now?
+to_filter <- sapply(data, function(x) sum(is.na(x)))
+to_filter[to_filter > 0]
+
+# N=17350
+write_csv(data, "./data/airbnb_sicily_clean.csv")
+
+```
 
