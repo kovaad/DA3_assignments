@@ -1,0 +1,69 @@
+---
+title: "Airbnb prediction models"
+author: "Adam Kovacs"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE, echo = FALSE, eval = TRUE)
+```
+
+## Introduction
+
+In this project, I analyze data from the [**Inside Airbnb site**](http://insideairbnb.com/get-the-data.html) to help a company operating small and mid-size apartments hosting 2-6 guests price their new real estates with the help of predictive models. The data analyzed consists of estates in Sicily, Italy and was compiled in 28 December, 2021. After careful preprocessing of the data, a total of 5 models (OLS, LASSO,CART and two random forest) are trained and tested to choose the one that proves to be the best in predicting the price of the outlets. Finally, the best model is validated on the holdout sample. 
+
+All codes and data used is available on the [**github repo**](https://github.com/kovaad/DA3_assignments) of my assignments for the Data Analysis 3 course of the MS in Business Analytics at Central European University. 
+
+```{r import}
+#clear memory
+rm(list=ls())
+
+#import packages
+if (!require(pacman)){
+  install.packages("pacman")
+}
+
+pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest, naniar, stringr)
+
+```
+
+# Data preparation
+
+In order to carry out the exercise, a thorough cleaning and filtering of the data was required. To get a complete picture about all the technical aspects of this process, a technical report has also been created, which is available [**here**](https://github.com/kovaad/DA3_assignments). In this report, I would only like to highlight the major decisions and discuss how the final clean dataset looks like after the process. 
+
+The first important decision was to define the scope of real estate types to be taken into account for the task. As there was no apartment category, I included all properties that were described either as an entire rental unit, serviced apartment, or home/apartment. Furthermore, I also selected listings that are a (private or shared) room in one of these types that can in themselves accommodate 2 to 6 people. 
+
+During the feature engineering process, a lot of transformations were needed to achieve desired formats of the variables (e.g. creating dummies from list of amenities, separating number of bathrooms and types etc.). Additionally, a number of numeric variables were also created different functional forms via quadratic, cubic or log transformation. Moreover, some others were simplified to factor variables (e.g. minimum nights to 1,2,3, or 3+). 
+
+As for the label engineering part, looking at the distributions of prices, some extremely low values were detected. Thus, I decided to restrict to an at least 50 USD price for a daily accommodation that seems much more reasonable for at least two people staying a night. An upper limit of 1000 USD is also set, though no observations are lost with this latter specification.  
+
+Missing values were also investigated and dealt with using various methods. If the target (price) was missing, they were dropped, if only a few were missing, simple imputation was used (e.g. number of beds assumed to be same as guests), but in some cases where substantial amount of data had to be imputed, flag variables were also created to take this into account. Finally, a column was dropped because it had too many missing values, and a really small number of rows as well.
+
+Finally, the clean dataset that we end up with consists of 17350 observations. The next important step was to create different functional forms and types that are possibly more useful predictors. This included the creation of quadratic, cubic and logarithmic terms of numeric variables, and also some simplification of creating factors from numeric variables that have rather distinct groups of values, which can be separated. 
+
+
+Let us look at the data by some important factors as well. 
+ 
+
+```{r import data and descriptive stats}
+#import data
+data <- read_csv("./data/airbnb_sicily_clean.csv")
+
+# Descriptive statistics
+datasummary( (`Room type` =  f_room_type) + (`Property type` = f_property_type) + (`Bathroom type` = f_bathroom_type) ~ N + Percent() , data = data )
+
+```
+
+And also check the distribution of the target variable, price. 
+
+```{r distribution of target, fig.height = 3, fig.width = 4, fig.align='center', fig.cap="Distribution of target variable", fig.pos='htb!'}
+ggplot(data=data, aes(x=usd_price_day)) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)), binwidth = 10, boundary=0,
+                  fill = 'navyblue', color = 'white', size = 0.25, alpha = 0.8,  show.legend=F,  na.rm=TRUE) +
+  coord_cartesian(xlim = c(0, 400)) +
+  labs(x = "Price (US dollars)",y = "Percent")+
+  scale_y_continuous(expand = c(0.00,0.00),limits=c(0, 0.15), breaks = seq(0, 0.15, by = 0.03), labels = scales::percent_format(1)) +
+    scale_x_continuous(expand = c(0.05,0.00),limits=c(0,400), breaks = seq(0,400, 50)) +
+  theme_bw() 
+```
+
