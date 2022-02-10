@@ -1,7 +1,12 @@
 ---
 title: "Airbnb prediction models"
 author: "Adam Kovacs"
+geometry: margin=2 cm
+fontsize: 9pt
 output: pdf_document
+header-includes: |
+  \usepackage{titling}
+  \setlength{\droptitle}{-5em}
 ---
 
 ```{r setup, include=FALSE}
@@ -23,11 +28,11 @@ if (!require(pacman)){
   install.packages("pacman")
 }
 
-pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest, naniar, stringr)
+pacman::p_load(tidyverse, caret, skimr, grid, glmnet, cowplot, modelsummary, fixest, naniar, stringr, kableExtra, xtable)
 
 ```
 
-# Data preparation
+### Data preparation
 
 In order to carry out the exercise, a thorough cleaning and filtering of the data was required. To get a complete picture about all the technical aspects of this process, a technical report has also been created, which is available [**here**](https://github.com/kovaad/DA3_assignments). In this report, I would only like to highlight the major decisions and discuss how the final clean dataset looks like after the process. 
 
@@ -41,29 +46,303 @@ Missing values were also investigated and dealt with using various methods. If t
 
 Finally, the clean dataset that we end up with consists of 17350 observations. The next important step was to create different functional forms and types that are possibly more useful predictors. This included the creation of quadratic, cubic and logarithmic terms of numeric variables, and also some simplification of creating factors from numeric variables that have rather distinct groups of values, which can be separated. 
 
-
-Let us look at the data by some important factors as well. 
+Let us look at the data by the room types. As we can see, most of the observations are entire apartments (~90%), while the rest are mainly private rooms with a negligible number of shared rooms. 
  
 
-```{r import data and descriptive stats}
+```{r import data and descriptive stats, table.pos='htb!', caption = "Distribution of data by room type"}
 #import data
-data <- read_csv("./data/airbnb_sicily_clean.csv")
+data <- read_csv("./data/airbnb_sicily_clean.csv") %>% 
+  mutate_if(is.character, factor)
 
 # Descriptive statistics
-datasummary( (`Room type` =  f_room_type) + (`Property type` = f_property_type) + (`Bathroom type` = f_bathroom_type) ~ N + Percent() , data = data )
+datasummary( (`Room type` =  f_room_type) ~ N + Percent() , data = data , caption = "Descriptive stats") 
 
 ```
 
-And also check the distribution of the target variable, price. 
+Let us also check the distribution of the target variable, price. As we can see, its range is between around 100 and 900 USD and follows a somewhat right-skewed distribution. 
 
-```{r distribution of target, fig.height = 3, fig.width = 4, fig.align='center', fig.cap="Distribution of target variable", fig.pos='htb!'}
+```{r distribution of target, fig.height = 2, fig.width = 4, fig.align='center', fig.cap="Distribution of target variable", fig.pos='htb!'}
+
 ggplot(data=data, aes(x=usd_price_day)) +
-  geom_histogram(aes(y = (..count..)/sum(..count..)), binwidth = 10, boundary=0,
+  geom_histogram(aes(y = (..count..)/sum(..count..)), binwidth = 30, boundary=0,
                   fill = 'navyblue', color = 'white', size = 0.25, alpha = 0.8,  show.legend=F,  na.rm=TRUE) +
-  coord_cartesian(xlim = c(0, 400)) +
+  coord_cartesian(xlim = c(50, 900)) +
   labs(x = "Price (US dollars)",y = "Percent")+
-  scale_y_continuous(expand = c(0.00,0.00),limits=c(0, 0.15), breaks = seq(0, 0.15, by = 0.03), labels = scales::percent_format(1)) +
-    scale_x_continuous(expand = c(0.05,0.00),limits=c(0,400), breaks = seq(0,400, 50)) +
+  scale_y_continuous(expand = c(0.00,0.00),limits=c(0, 0.09), breaks = seq(0, 0.09, by = 0.03), labels = scales::percent_format(1)) +
+    scale_x_continuous(expand = c(0.05,0.00),limits=c(100,900), breaks = seq(100,900, 100)) +
   theme_bw() 
+```
+
+Further tables and figures on the data, both in relation to the target variable and the predictors is available in the Appendix and in the [**technical report **](https://github.com/kovaad/DA3_assignments)
+
+### Modelling
+
+Modelling starts by choosing predictors to include in the different models to be used and compared. We define different types of predictors: there are some basic ones, which include variables like number of guests, bads, property type, neighborhood etc. Then there are some less basic ones (min, max nights, availability). There are also variables that are regarding the reviews and the host. Finally, there are a lot of dummy variables capturing the amenities available in the apartments. As we are not only training tree-based methods, but also LASSO, we create numerous interactions as well (with property type and neighborhood). We create three sets to be used from these: the first containing only the basic variables. The second containing all other categories. And the third containing also the interactions. 
+
+Next, we separate our dataset to a train and a holdout sample. The training data consists of 70% of the observations, while the holdout has 30% of it. 
+
+
+```{r modelling prep}
+
+# Define models: simpler -> extended
+
+# Basic Variables inc neighnourhood
+basic_vars <- c(
+  "n_accommodates", "n_beds", "n_days_since",
+  "f_property_type","f_room_type", "n_bathrooms", "f_bathroom_type",
+  "f_neighbourhood_cleansed")
+
+less_basic_vars <- c("f_minimum_nights", "f_maximum_nights", 
+  "n_availability_30", "n_availability_60","n_availability_90", "n_availability_365")
+
+# reviews
+reviews <- c("n_number_of_reviews", "flag_n_number_of_reviews" ,
+             "n_review_scores_rating", "flag_review_scores_rating",
+             "n_reviews_per_month", "flag_reviews_per_month", 
+             "n_number_of_reviews_ltm","n_number_of_reviews_l30d")
+# host infos
+host <- c("p_host_response_rate","p_host_acceptance_rate", 
+          "n_calculated_host_listings_count", "n_calculated_host_listings_count_entire_homes",
+          "n_calculated_host_listings_count_private_rooms", "n_calculated_host_listings_count_shared_rooms")
+
+# Dummy variables
+amenities <-  grep("^d_.*", names(data), value = TRUE)
+
+#interactions for the LASSO
+X1  <- c("n_accommodates*f_property_type",  "f_room_type*f_property_type",
+         "d_aircond*f_property_type", "d_tv*f_property_type", "d_longterm*f_property_type")
+# with boroughs
+X2  <- c("f_property_type*f_neighbourhood_cleansed", "f_room_type*f_neighbourhood_cleansed",
+         "n_accommodates*f_neighbourhood_cleansed" )
+
+predictors_1 <- c(basic_vars)
+predictors_2 <- c(basic_vars, less_basic_vars, reviews, host, amenities)
+predictors_E <- c(basic_vars, less_basic_vars, reviews, host, amenities, X1, X2)
+
+# create train and holdout samples
+
+set.seed(2801)
+train_indices <- as.integer(createDataPartition(data$usd_price_day, p = 0.7, list = FALSE))
+data_train <- data[train_indices, ]
+data_holdout <- data[-train_indices, ]
+
+```
+
+Now we are ready to construct, run and test our models. All models are evaluated using 5-fold cross-validation. The first, baseline model will be a simple OLS, where the predictors contain all variables from the second specification, meaning all basic and non-basic variables are included. 
+
+
+```{r OLS with dummies for area}
+
+# do 5-fold CV
+train_control <- trainControl(method = "cv",
+                              number = 5,
+                              verboseIter = FALSE)
+
+# using model B
+
+set.seed(1234)
+ols_model <- train(
+  formula(paste0("usd_price_day ~", paste0(predictors_2, collapse = " + "))),
+  data = data_train,
+  method = "lm",
+  trControl = train_control
+)
+
+ols_model_coeffs <-  ols_model$finalModel$coefficients
+ols_model_coeffs_df <- data.frame(
+  "variable" = names(ols_model_coeffs),
+  "ols_coefficient" = ols_model_coeffs
+) %>%
+  mutate(variable = gsub("`","",variable))
+
+
+```
+
+Next, a LASSO model is estimated. In this case, the extended model specification is used, which means that all the interaction terms created are also included. This is done, because precisely the strength of LASSO lies in the fact that it can shrink the coefficients from the many different predictors to 0, if they are completely irrelevant. During the process, centering and scaling is done and the lambda hyperparameter is tuned so as to get the best model. 
+
+```{r LASSO}
+
+# using extended model w interactions
+
+set.seed(1234)
+lasso_model <- train(
+  formula(paste0("usd_price_day ~", paste0(predictors_E, collapse = " + "))),
+  data = data_train,
+  method = "glmnet",
+  preProcess = c("center", "scale"),
+  tuneGrid =  expand.grid("alpha" = 1, "lambda" = seq(0.01, 0.25, by = 0.01)),
+  trControl = train_control
+)
+
+lasso_coeffs <- coef(
+    lasso_model$finalModel,
+    lasso_model$bestTune$lambda) %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "variable") %>%
+  rename(lasso_coefficient = `s1`)  # the column has a name "1", to be renamed
+
+lasso_coeffs_non_null <- lasso_coeffs[!lasso_coeffs$lasso_coefficient == 0,]
+
+regression_coeffs <- merge(ols_model_coeffs_df, lasso_coeffs_non_null, by = "variable", all=TRUE)
+
+```
+
+Moving on from OLS based models, we also test tree-based methods, the most simplest form of it at first, CART. In case of CART, we build a large tree of all the predictors from the second specification containing all variables and then prune it back to arrive at an optimal tree that we can use for prediction. 
+
+```{r CART with built-in pruning}
+
+set.seed(1234)
+cart_model <- train(
+  formula(paste0("usd_price_day ~", paste0(predictors_2, collapse = " + "))),
+  data = data_train,
+  method = "rpart",
+  tuneLength = 10,
+  trControl = train_control
+)
+
+
+```
+
+But there is considerable literature suggesting that CART is not ideal for prediction purposes, so two random forest models are also built. They are expected to improve the performance of the model on the grounds that by picking only the squareroot of available predictors at each tree, they are decorrelated. This improves the out of sample performance. The first random forest model uses the first (smaller) set of predictors only. 
+
+```{r simpler random forest}
+
+# set tuning
+tune_grid <- expand.grid(
+  .mtry = c(8),
+  .splitrule = "variance",
+  .min.node.size = c(50)
+)
+
+
+set.seed(1234)
+rf_model_1 <- train(
+  formula(paste0("usd_price_day ~", paste0(predictors_1, collapse = " + "))),
+  data = data_train,
+  method = "ranger",
+  trControl = train_control,
+  tuneGrid = tune_grid,
+  importance = "impurity"
+)
+
+
+```
+
+But we can also build a more complicated random forest model, where we include all the predictors from the second collection of variables. 
+
+```{r more complicated random forest}
+
+set.seed(1234)
+rf_model_2 <- train(
+  formula(paste0("usd_price_day ~", paste0(predictors_2, collapse = " + "))),
+  data = data_train,
+  method = "ranger",
+  trControl = train_control,
+  tuneGrid = tune_grid,
+  importance = "impurity"
+)
+
+
+# Show Model B rmse shown with all the combinations
+#rf_tuning_modelB <- rf_model_2$results %>%
+#  dplyr::select(mtry, min.node.size, RMSE) %>%
+#  dplyr::rename(nodes = min.node.size) %>%
+#  spread(key = mtry, value = RMSE)
+
+#kable(x = rf_tuning_modelB, format = "latex", digits = 2, caption = "CV RMSE") %>%
+#  add_header_above(c(" ", "vars" = 3))  %>%
+#  kable_styling(position = "center")
+
+```
+
+### Horcerace and evaluation
+
+Having run all these models, it is time to create a horserace between the different models to identify the one with the best predictive performance. First this is done by comparing the average RMSE of the 5-fold cross-validation on the training data. On Table 2, we can see that there are no substantial differences between the models, they are all between 215 and 225 USD. Given the roughly 100 to 900 USD range of prices, these values seem rather high, the models do not perform as good as expected, for which a number of reasons can be thought of. TO BE DISCUSSED HERE. 
+By comparing the models, we can infer that OLS and LASSO did roughly similarly, it is somewhat surprising that the simple OLS turned out to be slightly better. The CART, on the other hand, already performs better than the two OLS based methods. The first, simpler random forest produces similar results as the CART. On the contrary, the second, more complicated random forest model beats all others comfortably in predictive performance. 
+
+But, the goal of the project is not to perform well on the training dataset, but to help the pricing of the new apartments. This task is mimiced using the holdout dataset. The prformance of all 5 models are again tested on the holdout sample. Here, OLS already performs somewhat worse than even LASSO. Interestingly, the CART produces better predictions than the simpler random fores model. But the main emphasis should be again on the significantly lower RMSE that is achieved by the second, more complicated random forest model. 
+
+In light of these results, we can infer that the models, though surprisingly poorly, perform in a robust manner. There is no substantial overfitting, the performance of the models is very much comparable on the trainning and holdout samples. 
+
+```{r horserace}
+
+final_models <-
+  list("OLS" = ols_model,
+  "LASSO" = lasso_model,
+  "CART" = cart_model,
+  "Random forest 1" = rf_model_1,
+  "Random forest 2" = rf_model_2)
+
+results <- resamples(final_models) %>% summary()
+
+```
+
+
+```{r model selection}
+
+# Model selection is carried out on this CV RMS
+
+result_4 <- imap(final_models, ~{
+  mean(results$values[[paste0(.y,"~RMSE")]])
+}) %>% unlist() %>% as.data.frame() %>%
+  rename("CV RMSE" = ".")
+
+kable(x = result_4, format = "latex", digits = 3, booktabs=TRUE, linesep = "", caption = "Test evaluation using CV")  %>%
+  kable_styling(position = "center", latex_options = "HOLD_position")
+
+```
+
+
+
+
+```{r holdout evaluation}
+
+result_5 <- map(final_models, ~{
+  RMSE(predict(.x, newdata = data_holdout), data_holdout[["usd_price_day"]])
+}) %>% unlist() %>% as.data.frame() %>%
+  rename("Holdout RMSE" = ".")
+
+kable(x = result_5, format = "latex", digits = 3, booktabs=TRUE, linesep = "", caption = "Holdout evaluation")  %>%
+  kable_styling(position = "center", latex_options = "HOLD_position")
+
+```
+
+## Conclusion
+
+To conclude, in this project, the ...
+
+\pagebreak
+
+### Appendix
+
+```{r boxplot by room type,fig.height = 3, fig.width = 4, fig.align='center', fig.cap="Distribution of target variable by room type", fig.pos='htb!'}
+ggplot(data = data, aes(x = f_room_type, y = usd_price_day)) +
+  stat_boxplot(aes(group = f_room_type), geom = "errorbar", width = 0.3,
+               color = c('red','blue', 'black'), size = 0.5, na.rm=T)+
+  geom_boxplot(aes(group = f_room_type),
+               color = c('red','blue', 'black'), fill = c('red','blue', 'black'),
+               size = 0.5, width = 0.6, alpha = 0.3, na.rm=T, outlier.shape = NA) +
+  scale_y_continuous(expand = c(0.01,0.01),limits = c(0,300), breaks = seq(0,300,100)) +
+  labs(x = "Room type",y = "Price (US dollars)")+
+  theme_bw()
+```
+
+
+
+```{r another boxplot, fig.height = 5, fig.width = 7, fig.align='center', fig.cap="Distribution of price by accommodates and type", fig.pos='htb!'}
+ggplot(data, aes(x = factor(n_accommodates), y = usd_price_day,
+                        fill = factor(f_property_type), color=factor(f_property_type))) +
+  geom_boxplot(alpha=0.3, na.rm=T, outlier.shape = NA, width = 0.8) +
+    stat_boxplot(geom = "errorbar", width = 0.8, size = 0.3, na.rm=T)+
+    scale_color_manual(name="",
+                     values=c('red','blue')) +
+  scale_fill_manual(name="",
+                     values=c('red','blue')) +
+  labs(x = "Accomodates (Persons)",y = "Price (US dollars)")+
+  scale_y_continuous(expand = c(0.01,0.01), limits=c(0, 400), breaks = seq(0,400, 50))+
+  theme_bw() +
+  theme(legend.position = c(0.15,0.12)        )+
+  guides(color = guide_legend(override.aes = list(size = 0.5)))
 ```
 
